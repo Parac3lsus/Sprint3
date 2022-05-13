@@ -5,10 +5,10 @@ from sklearn import preprocessing
 from sklearn.preprocessing import OneHotEncoder
 
 import numpy as np
-#train_df = pd.read_csv("application_train.csv", nrows= 500)
-#test_df = pd.read_csv("application_test.csv", nrows = 100)
-train_df = pd.read_csv("application_train.csv")
-test_df = pd.read_csv("application_test.csv")
+train_df = pd.read_csv("application_train.csv", nrows= 1500)
+test_df = pd.read_csv("application_test.csv", nrows = 200)
+
+
 #==========================Exploratory Data Analysis=================================#
 #================================Dataset Basics======================================#
 #=====================================1.0============================================#
@@ -87,12 +87,27 @@ def get_dummies(train, test):
     test = train[train_col_list]
     return train, test
 
+def replace_outlier_IQR(df):
+    q1 = df.quantile(0.95)
+    return_df = df.where(df < q1, df.median())
+    return return_df
+
 def outliers_correction(train, test):
     #From Kaggle Competition Host: "Value 365243 denotes infinity in days, therefore you can consider them NA values"
-    train['DAYS_EMPLOYED'].replace(365243, np.nan, inplace= True)
-    test['DAYS_EMPLOYED'].replace(365243, np.nan, inplace=True)
+    train['DAYS_EMPLOYED'].replace(365243, np.nan, inplace = True)
+    test['DAYS_EMPLOYED'].replace(365243, np.nan, inplace = True)
+    train.replace('XNA', np.nan, inplace = True)
+    train.replace('XAP', np.nan, inplace=True)
+    test.replace('XNA', np.nan, inplace = True)
+    test.replace('XAP', np.nan, inplace=True)
+
+    # We convert only very high values found during data analysis
+    train['AMT_INCOME_TOTAL'] = replace_outlier_IQR(train['AMT_INCOME_TOTAL'])
+    train['AMT_CREDIT'] = replace_outlier_IQR(train['AMT_CREDIT'])
+    train['AMT_GOODS_PRICE'] = replace_outlier_IQR(train['AMT_GOODS_PRICE'])
 
     return train, test
+
 def impute_values(train, test):
     for col in train:
         if train[col].dtype != 'object':
@@ -103,18 +118,41 @@ def impute_values(train, test):
             test[col] = test[col].fillna(train[col].mode()[0])
     return train, test
 
+def data_scaling(train, test):
+    from sklearn.preprocessing import StandardScaler
+    scaler = StandardScaler()
+    train.set_index('SK_ID_CURR', inplace= True)
+    test.set_index('SK_ID_CURR', inplace= True)
+    for col in train:
+        train[col] = scaler.fit_transform(train[[col]])
+        test[col] = scaler.transform(test[[col]])
+    return train, test
+
 def pre_processing(train, test):
+    #target_column = pd.DataFrame()
+    target_column = train['TARGET']
     train.drop(['TARGET'], axis= 1, inplace=True)
+
     train, test = outliers_correction(train, test)
     train, test = impute_values(train, test)
     train, test = get_dummies(train, test)
-    return train, test
+    train, test = data_scaling(train, test)
+    train['TARGET'] = target_column.to_numpy()
+    return train.to_numpy(), test.to_numpy()
 
-print("=========================Getting There===========================")
+print("=========================Starting Preprocessing===========================")
+#proc_train_df, proc_test_df = pre_processing(train_df, test_df)
+train_proc, test_proc = pre_processing(train_df, test_df)
+print("=========================Preprocessing Finished===========================")
+
+
+
+
+#print(train_df['AMT_CREDIT'].describe())
+
 #pd.set_option('display.max_rows', None)
-#print(train_df.select_dtypes(include=np.number).columns.values)
-#plot_analysis =['DAYS_REGISTRATION','DAYS_EMPLOYED']
-proc_train_df, proc_test_df = pre_processing(train_df, test_df)
+#print(train_df.head(5).transpose())
+
 
 # nulls_in_columns = train_df.isna().sum() / len(train_df) * 100
 # print(nulls_in_columns.sort_values(ascending=False).head(20))
