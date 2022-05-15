@@ -1,12 +1,17 @@
 import pandas as pd
+import time
 import seaborn as sns
 import matplotlib.pyplot as plt
 from sklearn import preprocessing
 from sklearn.preprocessing import OneHotEncoder
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
 
 import numpy as np
-train_df = pd.read_csv("application_train.csv", nrows= 1500)
-test_df = pd.read_csv("application_test.csv", nrows = 200)
+#train_df = pd.read_csv("application_train.csv", nrows= 1500)
+#test_df = pd.read_csv("application_test.csv", nrows = 200)
+train_df = pd.read_csv("application_train.csv")
+test_df = pd.read_csv("application_test.csv")
 
 
 #==========================Exploratory Data Analysis=================================#
@@ -84,7 +89,7 @@ def get_dummies(train, test):
         if not col in list(test):
             test[col] = 0
     # We make sure rows are in the same order
-    test = train[train_col_list]
+    test = test[train_col_list]
     return train, test
 
 def replace_outlier_IQR(df):
@@ -127,23 +132,52 @@ def data_scaling(train, test):
         train[col] = scaler.fit_transform(train[[col]])
         test[col] = scaler.transform(test[[col]])
     return train, test
+def splitting(train, test):
+    xTrain = train.to_numpy()
+    yTrain = xTrain[:, -1]
+    xTrain = np.delete(xTrain, -1, axis=1)
+    xTest = test.to_numpy()
+    return xTrain, xTest, yTrain
 
 def pre_processing(train, test):
     #target_column = pd.DataFrame()
     target_column = train['TARGET']
     train.drop(['TARGET'], axis= 1, inplace=True)
-
     train, test = outliers_correction(train, test)
     train, test = impute_values(train, test)
     train, test = get_dummies(train, test)
     train, test = data_scaling(train, test)
     train['TARGET'] = target_column.to_numpy()
-    return train.to_numpy(), test.to_numpy()
+
+    return splitting(train, test)
 
 print("=========================Starting Preprocessing===========================")
-#proc_train_df, proc_test_df = pre_processing(train_df, test_df)
-train_proc, test_proc = pre_processing(train_df, test_df)
+# train_proc, test_proc = pre_processing(train_df, test_df)
+x_train, x_test, y_train = pre_processing(train_df, test_df)
 print("=========================Preprocessing Finished===========================")
+
+#================================Models Training===================================#
+#==============================LogisticRegression==================================#
+#=======================================1==========================================#
+log_reg = LogisticRegression(max_iter= 1000, C=0.5, random_state=7)
+log_reg.fit(x_train, y_train)
+#=======================================2==========================================#
+predicts = pd.DataFrame()
+predicts['SK_ID_CURR'] = test_df['SK_ID_CURR']
+predicts['TARGET'] = log_reg.predict_proba(x_test)[:,1]
+predicts.to_csv("predictions_prob",index=False)
+print("=========================Predictions Saved================================")
+print("=======================Private Score: 0.73251=============================")
+#=================================RandomForest===================================#
+#=======================================1==========================================#
+start_time = time.process_time()
+rnd_forest_cl = RandomForestClassifier(random_state=7, n_jobs=-2)
+rnd_forest_cl.fit(x_train,y_train)
+print("Time took by Random Forest Fit: ", time.process_time() - start_time)
+#=======================================2==========================================#
+predicts['SK_ID_CURR'] = test_df['SK_ID_CURR']
+predicts['TARGET'] = rnd_forest_cl.predict_proba(x_test)[:,1]
+predicts.to_csv("random_forest_predictions",index=False)
 
 
 
