@@ -2,10 +2,15 @@ import pandas as pd
 import time
 import seaborn as sns
 import matplotlib.pyplot as plt
+import scipy as sp
 from sklearn import preprocessing
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import RandomizedSearchCV
+from sklearn.model_selection import train_test_split
+import lightgbm as lgb
+
 
 import numpy as np
 #train_df = pd.read_csv("application_train.csv", nrows= 1500)
@@ -39,7 +44,9 @@ print(nulls_in_columns.sort_values(ascending=False).head(20))
 #=====================Analizing distribution of variables============================#
 #=====================================1.0============================================#
 # plt.figure(figsize=(10, 5))
-# sns.histplot(test_df['AMT_CREDIT'])
+# sns.histplot(test_df['AMT_CREDIT'], bins=10)
+# plt.show()
+#nr of bins to 10 or 5
 #=====================================2.0============================================#
 # feat = 'NAME_EDUCATION_TYPE'
 # fg = sns.displot(data=train_df, x=feat, stat='percent', height=3.5, aspect=1.25)
@@ -47,7 +54,7 @@ print(nulls_in_columns.sort_values(ascending=False).head(20))
 # for ax in fg.axes.ravel():
 #     # add annotations
 #     for c in ax.containers:
-#         # custom label calculates percent and add an empty string so 0 value bars don't have a number
+#         #custom label calculates percent and add an empty string so 0 value bars don't have a number
 #         labels = [f'{w:0.1f}%' if (w := v.get_height()) > 0 else '' for v in c]
 #
 #         ax.bar_label(c, labels=labels, label_type='edge', fontsize=8, rotation=90, padding=2)
@@ -101,9 +108,9 @@ def outliers_correction(train, test):
     #From Kaggle Competition Host: "Value 365243 denotes infinity in days, therefore you can consider them NA values"
     train['DAYS_EMPLOYED'].replace(365243, np.nan, inplace = True)
     test['DAYS_EMPLOYED'].replace(365243, np.nan, inplace = True)
-    train.replace('XNA', np.nan, inplace = True)
+    train.replace('XNA', np.nan, inplace=True)
     train.replace('XAP', np.nan, inplace=True)
-    test.replace('XNA', np.nan, inplace = True)
+    test.replace('XNA', np.nan, inplace=True)
     test.replace('XAP', np.nan, inplace=True)
 
     # We convert only very high values found during data analysis
@@ -167,17 +174,82 @@ predicts['SK_ID_CURR'] = test_df['SK_ID_CURR']
 predicts['TARGET'] = log_reg.predict_proba(x_test)[:,1]
 predicts.to_csv("predictions_prob",index=False)
 print("=========================Predictions Saved================================")
-print("=======================Private Score: 0.73251=============================")
+print("=================Logistic Regression Score: 0.73251========================")
+
 #=================================RandomForest===================================#
 #=======================================1==========================================#
 start_time = time.process_time()
 rnd_forest_cl = RandomForestClassifier(random_state=7, n_jobs=-2)
 rnd_forest_cl.fit(x_train,y_train)
-print("Time took by Random Forest Fit: ", time.process_time() - start_time)
+print("Time (in seconds) took by Random Forest Fit: ", time.process_time() - start_time)#/10
+
 #=======================================2==========================================#
 predicts['SK_ID_CURR'] = test_df['SK_ID_CURR']
 predicts['TARGET'] = rnd_forest_cl.predict_proba(x_test)[:,1]
 predicts.to_csv("random_forest_predictions",index=False)
+print("=====================Random Forest Score: 0.68348===========================")
+
+#=====================Randomized Search with Cross Validation======================#
+#=======================================1==========================================#
+# hyperparameter_grid = {
+#  'bootstrap': [False],
+#  'max_depth': [10, None],
+#  'max_features': ['auto', 'sqrt'],
+#  'min_samples_leaf': sp.stats.randint(5, 10),
+#  'min_samples_split': sp.stats.randint(7, 11),
+#  'n_estimators': sp.stats.randint(270, 310)
+# }
+# rnd_forest_cl = RandomForestClassifier(random_state=7, n_jobs=-2)
+# clf = RandomizedSearchCV(rnd_forest_cl, hyperparameter_grid, random_state=7, cv=None, scoring='roc_auc', n_iter=10, verbose=10)
+# search = clf.fit(x_train, y_train)
+# print(search.best_params_)
+#
+# #=======================================2==========================================#
+# predicts['SK_ID_CURR'] = test_df['SK_ID_CURR']
+# predicts['TARGET'] = clf.predict_proba(x_test)[:,1]
+# predicts.to_csv("random_forest_cv",index=False)
+#=======================================3==========================================#
+print("===================Random Forest CV Score: 0.72392==========================")
+
+#=============================Training LightGBM Model==============================#
+train_x, test_x, train_y, test_y = train_test_split(x_train, y_train, test_size = 0.33, random_state = 7, stratify=y_train)
+
+param_grid = {
+    'boosting_type': ['gbdt', 'dart'],
+    'num_leaves': list(range(20, 150)),
+    'learning_rate': list(np.logspace(np.log10(0.005), np.log10(0.5), base = 10, num = 1000)),
+    'subsample_for_bin': list(range(20000, 300000, 20000)),
+    'min_child_samples': list(range(20, 500, 5)),
+    'reg_alpha': list(np.linspace(0, 1)),
+    'reg_lambda': list(np.linspace(0, 1)),
+    'colsample_bytree': list(np.linspace(0.6, 1, 10)),
+    'subsample': list(np.linspace(0.5, 1, 100)),
+    'is_unbalance': [True, False]
+}
+parameters = {'objective': 'binary',
+              'metric' : 'auc',
+              'is_unbalance' : 'true',
+              'boosting' : 'gbdt',
+              'num_leaves' : 63,
+              'feature_fraction' : 0.5,
+              'bagging_fraction' : 0.5,
+              'bagging_freq' : 20,
+              'learning_rate' : 0.01,
+              'verbose' : -1
+            }
+
+train_set = lgb.Dataset(data=train_x, label=train_y)
+test_set = lgb.Dataset(data=test_x, label=test_y)
+
+lgb_model = lgb.train(parameters, train_set, valid_sets=test_set, num_boost_round=5000, early_stopping_rounds=50)
+#cv_results = lgb_model.cv(param_grid, train_set, num_boost_round=10000, nfold=5, early_stopping_rounds=100, metrics='auc', seed=42)
+#print(cv_results)
+#==================================================================================#
+predicts['SK_ID_CURR'] = test_df['SK_ID_CURR']
+predicts['TARGET'] = lgb_model.predict(x_test)
+predicts.to_csv("lightGBM",index=False)
+
+
 
 
 
