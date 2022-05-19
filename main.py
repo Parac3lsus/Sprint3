@@ -8,7 +8,10 @@ from sklearn.preprocessing import OneHotEncoder
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import RandomizedSearchCV
+from sklearn.model_selection import GridSearchCV
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.impute import SimpleImputer
 import lightgbm as lgb
 
 
@@ -97,6 +100,7 @@ def get_dummies(train, test):
             test[col] = 0
     # We make sure rows are in the same order
     test = test[train_col_list]
+
     return train, test
 
 def replace_outlier_IQR(df):
@@ -121,23 +125,40 @@ def outliers_correction(train, test):
     return train, test
 
 def impute_values(train, test):
-    for col in train:
-        if train[col].dtype != 'object':
-            train[col] = train[col].fillna(train[col].median())
-            test[col] = test[col].fillna(train[col].median())
-        else:
-            train[col] = train[col].fillna(train[col].mode()[0])
-            test[col] = test[col].fillna(train[col].mode()[0])
+    start_time = time.process_time()
+    numerical_features = train.select_dtypes(include='number').columns.tolist()
+
+    string_features = train.select_dtypes(exclude='number').columns.tolist()
+
+    str_imp = SimpleImputer(missing_values=np.nan, strategy='most_frequent')
+    num_imp = SimpleImputer(missing_values=np.nan, strategy='median')
+
+    train[numerical_features] = num_imp.fit_transform(train[numerical_features])
+    train[string_features] = str_imp.fit_transform(train[string_features])
+
+    test[numerical_features] = num_imp.transform(test[numerical_features])
+    test[string_features] = str_imp.transform(test[string_features])
+
+    # for col in train:
+    #     if train[col].dtype != 'object':
+    #         train[col] = train[col].fillna(train[col].median())
+    #         test[col] = test[col].fillna(train[col].median())
+    #     else:
+    #         train[col] = train[col].fillna(train[col].mode()[0])
+    #         test[col] = test[col].fillna(train[col].mode()[0])
+    print("Time (in seconds) took by Random Forest Fit: ", (time.process_time() - start_time)/10 )  # /10
+
     return train, test
 
 def data_scaling(train, test):
-    from sklearn.preprocessing import StandardScaler
     scaler = StandardScaler()
     train.set_index('SK_ID_CURR', inplace= True)
     test.set_index('SK_ID_CURR', inplace= True)
+
     for col in train:
         train[col] = scaler.fit_transform(train[[col]])
         test[col] = scaler.transform(test[[col]])
+
     return train, test
 def splitting(train, test):
     xTrain = train.to_numpy()
@@ -191,23 +212,24 @@ print("=====================Random Forest Score: 0.68348========================
 
 #=====================Randomized Search with Cross Validation======================#
 #=======================================1==========================================#
-# hyperparameter_grid = {
-#  'bootstrap': [False],
-#  'max_depth': [10, None],
-#  'max_features': ['auto', 'sqrt'],
-#  'min_samples_leaf': sp.stats.randint(5, 10),
-#  'min_samples_split': sp.stats.randint(7, 11),
-#  'n_estimators': sp.stats.randint(270, 310)
-# }
-# rnd_forest_cl = RandomForestClassifier(random_state=7, n_jobs=-2)
-# clf = RandomizedSearchCV(rnd_forest_cl, hyperparameter_grid, random_state=7, cv=None, scoring='roc_auc', n_iter=10, verbose=10)
-# search = clf.fit(x_train, y_train)
-# print(search.best_params_)
-#
-# #=======================================2==========================================#
-# predicts['SK_ID_CURR'] = test_df['SK_ID_CURR']
-# predicts['TARGET'] = clf.predict_proba(x_test)[:,1]
-# predicts.to_csv("random_forest_cv",index=False)
+print("Cross Validation Start")
+hyperparameter_grid = {
+ 'bootstrap': [False],
+ 'max_depth': [10, None],
+ 'max_features': ['auto', 'sqrt'],
+ 'min_samples_leaf': sp.stats.randint(5, 10),
+ 'min_samples_split': sp.stats.randint(7, 11),
+ 'n_estimators': sp.stats.randint(270, 310)
+}
+rnd_forest_cl = RandomForestClassifier(random_state=7, n_jobs=-2)
+clf = RandomizedSearchCV(rnd_forest_cl, hyperparameter_grid, random_state=7, cv=None, scoring='roc_auc', n_iter=10, verbose=10)
+search = clf.fit(x_train, y_train)
+print(search.best_params_)
+
+#=======================================2==========================================#
+predicts['SK_ID_CURR'] = test_df['SK_ID_CURR']
+predicts['TARGET'] = clf.predict_proba(x_test)[:,1]
+predicts.to_csv("random_forest_cv",index=False)
 #=======================================3==========================================#
 print("===================Random Forest CV Score: 0.72392==========================")
 
@@ -242,29 +264,61 @@ train_set = lgb.Dataset(data=train_x, label=train_y)
 test_set = lgb.Dataset(data=test_x, label=test_y)
 
 lgb_model = lgb.train(parameters, train_set, valid_sets=test_set, num_boost_round=5000, early_stopping_rounds=50)
-#cv_results = lgb_model.cv(param_grid, train_set, num_boost_round=10000, nfold=5, early_stopping_rounds=100, metrics='auc', seed=42)
-#print(cv_results)
+print(lgb_model.best_score)
+
 #==================================================================================#
 predicts['SK_ID_CURR'] = test_df['SK_ID_CURR']
 predicts['TARGET'] = lgb_model.predict(x_test)
 predicts.to_csv("lightGBM",index=False)
+#==================================================================================#
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.linear_model import LogisticRegression
+import pandas as pd
+
+train_df = pd.read_csv("application_train.csv")
+test_df = pd.read_csv("application_test.csv")
+
+ids = test_df['SK_ID_CURR']
+test_df.drop(['SK_ID_CURR'], axis = 1, inplace=True)
+train_df.drop(['SK_ID_CURR'], axis = 1, inplace=True)
+target_column = train_df['TARGET']
+train_df.drop(['TARGET'], axis=1, inplace=True)
 
 
+numerical_features = train_df.select_dtypes(include='number').columns.tolist()
+string_features = train_df.select_dtypes(exclude='number').columns.tolist()
+
+numeric_pipeline = Pipeline(steps=[
+    ('impute', SimpleImputer(strategy='mean')),
+    ('scale', MinMaxScaler())
+])
 
 
+string_pipeline = Pipeline(steps=[
+    ('impute', SimpleImputer(strategy='most_frequent')),
+    ('encode', OneHotEncoder(drop = 'if_binary', handle_unknown='ignore', sparse=False))
+])
 
+full_processor = ColumnTransformer(transformers=[
+    ('number', numeric_pipeline, numerical_features),
+    ('string', string_pipeline, string_features)
+])
 
-#print(train_df['AMT_CREDIT'].describe())
+lr_pipeline = Pipeline(steps=[
+    ('preprocess', full_processor),
+    ('model', LogisticRegression())
+])
 
-#pd.set_option('display.max_rows', None)
-#print(train_df.head(5).transpose())
+lr_pipeline.fit(train_df, target_column)
 
+predicts = pd.DataFrame()
+predicts['SK_ID_CURR'] = ids
+predicts['TARGET'] = lr_pipeline.predict_proba(test_df)[:,1]
+predicts.to_csv("PipelineRegressor",index=False)
 
-# nulls_in_columns = train_df.isna().sum() / len(train_df) * 100
-# print(nulls_in_columns.sort_values(ascending=False).head(20))
-# print(train_df.select_dtypes(include=np.number).columns.values)
-# print("==================================================================")
-#print()
-
-
+print("Logistic Regressor Pipeline Kaggle Score: 0.73016")
 
